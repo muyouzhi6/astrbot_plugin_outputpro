@@ -1,5 +1,6 @@
 import asyncio
 import random
+import re
 from dataclasses import dataclass, field
 
 from astrbot.api import logger
@@ -174,10 +175,20 @@ class SplitStep(BaseStep):
         # Reply / At
         pending_prefix: list[BaseMessageComponent] = []
 
-        # 占位符逻辑，用于保护 Reply + At 后的等宽空格
+        # 占位符逻辑
         PLACEHOLDER = "__OUTPUTPRO_SPACING_PLACEHOLDER__"
+        MIXED_SPACE_PLACEHOLDER = "__OUTPUTPRO_MIXED_SPACE_PLACEHOLDER__"
         PROTECTED_SPACE = "\u200b \u200b"
         has_protected = False
+        has_mixed_protected = False
+
+        def _is_cjk_context(ch: str) -> bool:
+            """判断是否为中文字符或中文标点"""
+            return (
+                "\u4e00" <= ch <= "\u9fa5" or     # 汉字
+                "\u3000" <= ch <= "\u303f" or     # 中文标点
+                "\uff00" <= ch <= "\uffef"        # 全角符号
+            )
 
         def _merge_space_if_needed(target: Segment, comps: list[BaseMessageComponent]):
             if target.components and comps:
@@ -239,12 +250,30 @@ class SplitStep(BaseStep):
                 if not text:
                     continue
 
-                # 占位符保护逻辑：检测 Reply + At 后的等宽空格
+                # 1. 保护 Reply + At 后的等宽空格
                 if not has_protected and len(pending_prefix) >= 2 and \
                    isinstance(pending_prefix[0], Reply) and isinstance(pending_prefix[1], At) and \
                    text.startswith(PROTECTED_SPACE):
                     text = text.replace(PROTECTED_SPACE, PLACEHOLDER, 1)
                     has_protected = True
+                
+                # 2. 保护中西文之间的普通空格
+                if " " in text:
+                    def replace_mixed(m):
+                        start = m.start()
+                        end = m.end()
+                        prev_ch = text[start-1] if start > 0 else ""
+                        next_ch = text[end] if end < len(text) else ""
+                        
+                        # 只有当两侧字符类型不一致时才保护
+                        if prev_ch and next_ch and _is_cjk_context(prev_ch) != _is_cjk_context(next_ch):
+                            return MIXED_SPACE_PLACEHOLDER * (end - start)
+                        return m.group()
+                    
+                    original_text = text
+                    text = re.sub(r" +", replace_mixed, text)
+                    if text != original_text:
+                        has_mixed_protected = True
 
                 if exhausted:
                     if segments:
@@ -349,10 +378,17 @@ class SplitStep(BaseStep):
         if current.components:
             push(current)
 
-        # 还原占位符
+        def _restore_placeholders(comp: BaseMessageComponent):
+            if isinstance(comp, Plain):
+                if has_protected:
+                    comp.text = comp.text.replace(PLACEHOLDER, PROTECTED_SPACE)
+                if has_mixed_protected:
+                    comp.text = comp.text.replace(MIXED_SPACE_PLACEHOLDER, " ")
+
         for seg in segments:
             for comp in seg.components:
-                if isinstance(comp, Plain) and comp.text and PLACEHOLDER in comp.text:
-                    comp.text = comp.text.replace(PLACEHOLDER, PROTECTED_SPACE)
+                _restore_placeholders(comp)
+        for comp in current.components:
+            _restore_placeholders(comp)
 
         return segments
