@@ -13,12 +13,17 @@ from .base import BaseStep
 
 class ReplyStep(BaseStep):
     name = StepName.REPLY
+    unsupported_platforms = {"dingtalk"}
 
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         self.cfg = config.reply
 
     async def handle(self, ctx: OutContext) -> StepResult:
+        platform_name = ctx.event.get_platform_name()
+        if platform_name in self.unsupported_platforms:
+            return StepResult(msg=f"平台不支持智能引用，已跳过: {platform_name}")
+
         if self.cfg.threshold > 0 and all(
             isinstance(x, Plain | Image | Face | At) for x in ctx.chain
         ):
