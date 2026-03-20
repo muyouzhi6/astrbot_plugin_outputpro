@@ -18,6 +18,24 @@ from ..config import PluginConfig
 from ..model import OutContext, StepName, StepResult
 from .base import BaseStep
 
+INVISIBLE_CHAR_RE = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]+")
+
+
+def _normalize_plain_text(text: str) -> str:
+    return INVISIBLE_CHAR_RE.sub("", text or "")
+
+
+def _is_leading_empty_segment(seg: "Segment") -> bool:
+    for comp in seg.components:
+        if isinstance(comp, Plain):
+            if _normalize_plain_text(comp.text).strip():
+                return False
+            continue
+        if isinstance(comp, At | Reply):
+            continue
+        return False
+    return True
+
 
 @dataclass
 class Segment:
@@ -76,7 +94,26 @@ class SplitStep(BaseStep):
                     comp.text = self.cfg.tail_punc_re.sub("", comp.text)
                     break
 
+        dropped_leading_empty = False
+        leading_header: list[BaseMessageComponent] = []
+        while segments and _is_leading_empty_segment(segments[0]):
+            dropped = segments.pop(0)
+            for comp in dropped.components:
+                if isinstance(comp, Reply | At):
+                    leading_header.append(comp)
+            dropped_leading_empty = True
+
+        if not segments:
+            ctx.chain.clear()
+            return StepResult(msg="分段结果为空，已丢弃")
+
+        if leading_header:
+            segments[0].components = [*leading_header, *segments[0].components]
+
         if len(segments) <= 1:
+            if dropped_leading_empty:
+                ctx.chain.clear()
+                ctx.chain.extend(segments[0].components)
             return StepResult()
 
         logger.debug(f"[Splitter] 消息被分为 {len(segments)} 段")
@@ -257,7 +294,7 @@ class SplitStep(BaseStep):
                     text = text.replace(PROTECTED_SPACE, PLACEHOLDER, 1)
                     has_protected = True
                 
-                # 2. 保护中西文之间的普通空格
+                # 2. 空格保护
                 if " " in text:
                     def replace_mixed(m):
                         start = m.start()
@@ -265,10 +302,12 @@ class SplitStep(BaseStep):
                         prev_ch = text[start-1] if start > 0 else ""
                         next_ch = text[end] if end < len(text) else ""
                         
-                        # 只有当两侧字符类型不一致时才保护
-                        if prev_ch and next_ch and _is_cjk_context(prev_ch) != _is_cjk_context(next_ch):
-                            return MIXED_SPACE_PLACEHOLDER * (end - start)
-                        return m.group()
+                        # 只有当两侧都是中文(CJK)时，才返回原空格
+                        if prev_ch and next_ch and _is_cjk_context(prev_ch) and _is_cjk_context(next_ch):
+                            return m.group()
+                        
+                        # 其余情况均视为需要保护的间距
+                        return MIXED_SPACE_PLACEHOLDER * (end - start)
                     
                     original_text = text
                     text = re.sub(r" +", replace_mixed, text)
