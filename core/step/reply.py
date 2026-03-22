@@ -1,12 +1,9 @@
 from astrbot.core.message.components import (
     At,
     Face,
-    File,
     Image,
     Plain,
-    Record,
     Reply,
-    Video,
 )
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -31,8 +28,7 @@ class ReplyStep(BaseStep):
             return StepResult(msg=f"平台不支持智能引用，已跳过: {platform_name}")
 
         if self.cfg.threshold > 0 and all(
-            isinstance(x, Plain | Image | Face | At | File | Video | Record)
-            for x in ctx.chain
+            isinstance(x, Plain | Image | Face | At) for x in ctx.chain
         ):
             msg_id = str(ctx.event.message_obj.message_id)
             queue = ctx.group.msg_queue
