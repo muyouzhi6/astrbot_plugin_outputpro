@@ -75,12 +75,12 @@
     },
     "summary": {
         "description": "【图片外显】",
-        "hint": "对单张图片的消息插入外显金句。外显指的是：正常的QQ没点进群聊前，若群聊发了一张图片，你只会在外面看见“[图片]”, 而图片外显功能就是为了让 “[图片]” 两字显示成更丰富的文本（仅aiocqhttp平台可用）",
+        "hint": "为单张图片消息插入外显金句。外显指的是：在 QQ 群列表中，原本显示“[图片]”的位置会替换为更丰富的文本（仅 aiocqhttp 平台可用）",
         "type": "object",
         "items": {
             "quotes": {
                 "description": "默认图片外显金句",
-                "hint": "随机抽取一句金句给图片外显使用。请自行添加",
+                "hint": "随机抽取一句金句用于图片外显。可按需自行补充",
                 "type": "list",
                 "default": [
                     "你已被移出群聊",
@@ -91,7 +91,7 @@
             },
             "quotes_files": {
                 "description": "金句文件路径",
-                "hint": "可自行打开文件添加金句。支持相对路径和绝对路径，请用 / 拼接路径。支持填写多个路径，所有金句会整合在一起(包括默认金句)，随机抽取一句进行外显",
+                "hint": "可在文件中维护金句。支持相对路径与绝对路径，请使用 / 作为路径分隔符。可填写多个路径，系统会与默认金句合并后随机抽取",
                 "type": "list",
                 "default": [
                     "data/plugins/astrbot_plugin_outputpro/default_quotes.json"
@@ -106,7 +106,7 @@
         "items": {
             "keywords": {
                 "description": "检测报错所用关键词",
-                "hint": "Bot发的消息中，包含列表中任一关键字时，消息将被拦截",
+                "hint": "当 Bot 消息包含列表中任一关键词时，将触发拦截",
                 "type": "list",
                 "default": [
                     "请求失败",
@@ -120,8 +120,8 @@
                 "default": ""
             },
             "forward_umo": {
-                "description": "转发的会话ID",
-                "hint": "将报错信息转发到此会话，用 sid 命令可查看当前会话的ID。填 admin 则转发给配置中的所有 Bot 管理员, 留空则不转发",
+                "description": "转发目标会话 ID",
+                "hint": "将报错信息转发到该会话。可用 sid 命令查看当前会话 ID。填 admin 表示转发给配置中的所有 Bot 管理员；留空则不转发",
                 "type": "string",
                 "default": "admin"
             }
@@ -134,11 +134,11 @@
         "items": {
             "timeout": {
                 "description": "超时拦截秒数",
-                "hint": "如果Bot回复时间超过此阈值(单位为秒)，则判定为超时，并拦截回复的消息。(有时LLM响应较慢，bot总是回复一段时间之前的消息, 此时超时拦截可改善此情况)",
+                "hint": "若 Bot 回复耗时超过该阈值（秒），则判定为超时并拦截该消息。可缓解 LLM 响应过慢导致的“错位回复”问题",
                 "type": "int",
                 "slider": {
                     "min": 0,
-                    "max": 120,
+                    "max": 180,
                     "step": 1
                 },
                 "default": 0
@@ -151,7 +151,7 @@
             },
             "block_words": {
                 "description": "拦截关键词",
-                "hint": "Bot发的消息中，包含列表中任一关键字时，消息将被拦截",
+                "hint": "当 Bot 消息包含列表中任一关键词时，将触发拦截",
                 "type": "list",
                 "default": [
                     "抱歉",
@@ -191,18 +191,18 @@
     "at": {
         "description": "【解析艾特】",
         "type": "object",
-        "hint": "将消息中句首的假艾特转换成真艾特, 再按概率保留或移除艾特",
+        "hint": "将消息句首的假艾特转换为真实艾特，并按概率决定保留或移除",
         "default": true,
         "items": {
             "at_str": {
                 "description": "转换成字符串艾特",
-                "hint": "将解析到的真艾特重新转换成字符串艾特，即 @username xxx (如果发现真艾特与文本间的空格消失了，可以尝试开启此选项，开启后插件会用字符串形式保住空格)",
+                "hint": "将解析到的真实艾特转换回字符串形式（如 @username xxx）。若出现艾特与文本间空格丢失，可尝试开启",
                 "type": "bool",
                 "default": true
             },
             "at_prob": {
                 "description": "艾特概率",
-                "hint": "随机值小于此值 → 必须带 @；随机值大于此值 → 必须不带 @。设为 0 则关闭此功能。请提前关闭Astrbot自动的At功能",
+                "hint": "随机值小于该值时强制带 @，大于该值时强制不带 @。设为 0 表示关闭该功能。建议先关闭 AstrBot 自带的 At 功能",
                 "type": "float",
                 "slider": {
                     "min": 0,
@@ -237,19 +237,19 @@
             },
             "parenthesis": {
                 "description": "摘除小括号内容",
-                "hint": "即摘除消息中的 (...) 支持半角和全角括号",
+                "hint": "摘除消息中的 (...) 内容，支持半角与全角括号",
                 "type": "bool",
                 "default": true
             },
             "emotion_tag": {
                 "description": "摘除情绪标签",
-                "hint": "即摘除消息中的 &&...&&, 若不生效则可能是被其他插件干扰",
+                "hint": "摘除消息中的 &&...&& 内容；若不生效，可能被其他插件干扰",
                 "type": "bool",
                 "default": true
             },
             "emoji": {
-                "description": "清理emoji",
-                "hint": "清理文本中的emoji，对喜欢发emoji的模型有奇效（比如智谱）",
+                "description": "清理 Emoji",
+                "hint": "清理文本中的 Emoji，对高频使用 Emoji 的模型效果更明显（如部分智谱模型）",
                 "type": "bool",
                 "default": true
             },
@@ -274,7 +274,7 @@
             },
             "punctuation": {
                 "description": "整体清洗的特殊符号",
-                "hint": "填写正则表达式，例如：[#%~], 注意是整句清洗",
+                "hint": "填写正则表达式，例如 [#%~]。该规则会作用于整句文本",
                 "type": "string",
                 "default": "[#%~]"
             }
@@ -287,7 +287,7 @@
         "items": {
             "words": {
                 "description": "替换词对",
-                "hint": "格式为：“旧词 新词”，旧词写前面，中间空格隔开，新词写后面(可不填，不填则采用默认替换词)",
+                "hint": "格式为“旧词 新词”：旧词在前，中间空格分隔，新词在后（新词可留空，留空时使用默认替换词）",
                 "type": "list",
                 "default": [
                     "示例旧词1 示例新词1",
@@ -305,17 +305,24 @@
     "tts": {
         "description": "【文转语音】",
         "type": "object",
-        "hint": "将消息转为语音。（仅aiocqhttp平台可用）。本插件基于QQ声聊实现TTS, 无需部署, 无需密钥。 开启前, 请先关闭Astrbot自带的TTS功能",
+        "hint": "将文本回复转为语音。支持两种模式：优先使用所选 TTS 模型；未选择时走 QQ 声聊中转（可被其他平台复用）",
         "items": {
+            "tts_provider_id": {
+                "description": "可选 TTS 模型",
+                "type": "string",
+                "_special": "select_provider_tts",
+                "hint": "留空表示不启用模型，改走 QQ 声聊中转；选择后优先使用该 TTS Provider 生成语音",
+                "default": ""
+            },
             "group_id": {
                 "description": "中转群群号",
-                "hint": "必填！ 生成AI语音时, 用中转群中转一次后，可以避免显示AI语音",
+                "hint": "使用 QQ 声聊中转时填写。模型 TTS 模式下可留空",
                 "type": "string",
                 "default": ""
             },
             "character_id": {
-                "description": "默认使用的AI语音角色",
-                "hint": "将文本转为AI语音时使用",
+                "description": "默认 AI 语音角色",
+                "hint": "在 QQ 声聊中转模式下，将文本转为语音时使用该角色",
                 "type": "string",
                 "options": [
                     "lucy-voice-laibixiaoxin",
@@ -379,8 +386,8 @@
                 "default": 50
             },
             "prob": {
-                "description": "触发tts的概率",
-                "hint": "",
+                "description": "触发 TTS 的概率",
+                "hint": "随机值小于该概率时触发 TTS",
                 "type": "float",
                 "slider": {
                     "min": 0,
@@ -394,11 +401,11 @@
     "t2i": {
         "description": "【文转图片】",
         "type": "object",
-        "hint": "将长文本转为图片。本插件使用 pillowmd 渲染长文本，轻量易用又稳定。如果可以, 开启此功能前, 请先关闭Astrbot的自带的长文本转图功能",
+        "hint": "将长文本转为图片。本插件使用 pillowmd 渲染，轻量且稳定。建议开启前先关闭 AstrBot 自带的长文本转图功能",
         "items": {
             "threshold": {
                 "description": "文本长度阈值",
-                "hint": "当消息长度超过此阈值时, 执行长文本处理",
+                "hint": "当消息长度超过该阈值时，执行长文本转图处理",
                 "type": "int",
                 "slider": {
                     "min": 0,
@@ -408,8 +415,8 @@
                 "default": 150
             },
             "pillowmd_style_dir": {
-                "description": "Pillowmd样式文件目录",
-                "hint": "支持相对路径和绝对路径, 请用 / 隔开",
+                "description": "Pillowmd 样式目录",
+                "hint": "支持相对路径与绝对路径，请使用 / 作为路径分隔符",
                 "type": "string",
                 "default": "data/plugins/astrbot_plugin_outputpro/t2i_style"
             },
@@ -430,11 +437,11 @@
     "reply": {
         "description": "【智能引用】",
         "type": "object",
-        "hint": "当bot要回复的消息被其他人插嘴时， 引用要回复的消息。",
+        "hint": "当 Bot 准备回复的消息被他人插入新消息时，自动引用目标消息",
         "items": {
             "threshold": {
                 "description": "引用阈值",
-                "hint": "定义当bot要回复的消息被其他人插嘴了几条时，则引用要回复的消息。 设为 0 表示关闭引用功能, 请提前关闭Astrbot自动的Reply功能",
+                "hint": "设置“被插入多少条消息后触发引用”。设为 0 表示关闭引用功能。建议先关闭 AstrBot 自带 Reply 功能",
                 "type": "int",
                 "slider": {
                     "min": 0,
@@ -453,7 +460,7 @@
     },
     "forward": {
         "description": "【合并转发】",
-        "hint": "将长文本合并转发（仅aiocqhttp平台可用）",
+        "hint": "将长文本合并转发（aiocqhttp 平台为合并转发，Telegram 平台为折叠引用）",
         "type": "object",
         "items": {
             "threshold": {
@@ -469,7 +476,7 @@
             },
             "node_name": {
                 "description": "转发节点昵称",
-                "hint": "转发消息时使用的昵称，留空则自动获取bot的昵称来显示",
+                "hint": "转发消息时使用的昵称。留空则自动使用 Bot 当前昵称",
                 "type": "string",
                 "default": ""
             }
@@ -477,7 +484,7 @@
     },
     "recall": {
         "description": "【自动撤回】",
-        "hint": "检测发出的消息是否需要撤回，并执行撤回操作（仅aiocqhttp平台可用）",
+        "hint": "检测发出的消息是否需要撤回，并按延时执行撤回（当前支持 aiocqhttp 与 Telegram）",
         "type": "object",
         "items": {
             "keywords": {
@@ -492,7 +499,7 @@
             },
             "delay": {
                 "description": "撤回延时",
-                "hint": "几秒后撤回消息，单位为秒",
+                "hint": "消息发送后延迟多少秒执行撤回",
                 "type": "int",
                 "slider": {
                     "min": 0,
@@ -505,12 +512,12 @@
     },
     "split": {
         "description": "【分段回复】",
-        "hint": "进行分段回复",
+        "hint": "将一条长消息拆分为多段后依次发送",
         "type": "object",
         "items": {
             "char_list": {
                 "description": "触发分段的字符",
-                "hint": "文字后面带这些符号就会分段，（换行是\\n，空格是\\s），如：，。？！\\n 。注意：括号/引号等成对符号内部不会触发分段",
+                "hint": "当文本命中这些字符时触发分段（换行为 \\n，空格为 \\s），如：，。？！\\n。注意：括号/引号等成对符号内部不会触发分段",
                 "type": "list",
                 "default": [
                     "。",
@@ -532,7 +539,7 @@
             "typing_cps": {
                 "description": "打字速度",
                 "type": "float",
-                "hint": "模拟打字的速度（字/秒）, 6~10 更像真人。延迟时间(秒) = 字数 * 打字速度(字/秒) ",
+                "hint": "模拟打字速度（字/秒），6~10 更像真人。延迟时间（秒）≈ 字数 / 打字速度",
                 "slider": {
                     "min": 1,
                     "max": 20,
