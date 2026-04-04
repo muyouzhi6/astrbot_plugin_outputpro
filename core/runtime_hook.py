@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from functools import wraps
 from typing import Any
 
 from astrbot.api import logger
-from astrbot.core.message.components import BaseMessageComponent
+from astrbot.core.message.components import BaseMessageComponent, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform import Platform
+from astrbot.core.platform.message_type import MessageType
 
 from .config import PluginConfig
 from .sanitize import collect_visible_text, replace_in_chain, sanitize_chain
+
+
+@dataclass(slots=True)
+class FilterDecision:
+    action: str = "pass"
+    matched_word: str | None = None
 
 
 def _iter_subclasses(cls: type) -> list[type]:
@@ -84,7 +94,12 @@ class RuntimeOutputHook:
             async def wrapped(event_self, message, *args, **kwargs):
                 chain = _normalize_message(message)
                 if chain is not None:
-                    if hook._filter_chain(chain, source=f"{cls.__name__}.send"):
+                    decision = await hook._filter_chain(
+                        chain,
+                        source=f"{cls.__name__}.send",
+                        session=getattr(event_self, "session", None),
+                    )
+                    if decision.action == "drop":
                         return None
                     message = chain
                 return await original(event_self, message, *args, **kwargs)
@@ -103,17 +118,24 @@ class RuntimeOutputHook:
                     return await original(event_self, generator, *args, **kwargs)
 
                 async def filtered_generator() -> AsyncGenerator[Any, None]:
+                    emitted_error_replacement = False
                     async for item in generator:
                         chain = _normalize_message(item)
                         if chain is None:
                             yield item
                             continue
 
-                        if hook._filter_chain(
+                        decision = await hook._filter_chain(
                             chain,
                             source=f"{cls.__name__}.send_streaming",
-                        ):
+                            session=getattr(event_self, "session", None),
+                        )
+                        if decision.action == "drop":
                             continue
+                        if decision.action == "replaced":
+                            if emitted_error_replacement:
+                                continue
+                            emitted_error_replacement = True
 
                         if not chain.chain:
                             continue
@@ -134,10 +156,12 @@ class RuntimeOutputHook:
             async def wrapped(platform_self, session, message_chain, *args, **kwargs):
                 chain = _normalize_message(message_chain)
                 if chain is not None:
-                    if hook._filter_chain(
+                    decision = await hook._filter_chain(
                         chain,
                         source=f"{cls.__name__}.send_by_session",
-                    ):
+                        session=session,
+                    )
+                    if decision.action == "drop":
                         return None
                     message_chain = chain
                 return await original(
@@ -152,9 +176,15 @@ class RuntimeOutputHook:
 
         self._patch(cls, "send_by_session", factory)
 
-    def _filter_chain(self, chain: MessageChain, source: str) -> bool:
+    async def _filter_chain(
+        self,
+        chain: MessageChain,
+        source: str,
+        *,
+        session=None,
+    ) -> FilterDecision:
         if not chain.chain:
-            return False
+            return FilterDecision(action="drop")
 
         before_count = len(chain.chain)
         before_plain = collect_visible_text(chain.chain)
@@ -174,21 +204,123 @@ class RuntimeOutputHook:
                 f"{before_plain!r} -> {plain!r}"
             )
 
+        error_word = self._match_error_keyword(plain)
+        if error_word:
+            await self._forward_error_if_needed(
+                plain,
+                session=session,
+                source=source,
+                keyword=error_word,
+            )
+            custom_msg = (self.config.error.custom_msg or "").strip()
+            if custom_msg:
+                chain.chain = MessageChain().message(custom_msg).chain
+                logger.warning(
+                    f"[outputpro:{source}] intercepted outbound error text by keyword: "
+                    f"{error_word}; replaced with custom_msg"
+                )
+                return FilterDecision(action="replaced", matched_word=error_word)
+
+            logger.warning(
+                f"[outputpro:{source}] intercepted outbound error text by keyword: "
+                f"{error_word}; dropped directly"
+            )
+            chain.chain.clear()
+            return FilterDecision(action="drop", matched_word=error_word)
+
         blocked_word = self._match_block_word(plain)
         if blocked_word:
             logger.info(
                 f"[outputpro:{source}] blocked outbound text by word: {blocked_word}"
             )
             chain.chain.clear()
-            return True
+            return FilterDecision(action="drop", matched_word=blocked_word)
 
-        return not chain.chain
+        return FilterDecision(action="drop" if not chain.chain else "pass")
+
+    async def _forward_error_if_needed(
+        self,
+        plain: str,
+        *,
+        session,
+        source: str,
+        keyword: str,
+    ) -> None:
+        forward_umo = (self.config.error.forward_umo or "").strip()
+        if not forward_umo or not plain:
+            return
+
+        context = getattr(self.config, "context", None)
+        if context is None:
+            return
+
+        chain = MessageChain([Plain(plain)])
+        if forward_umo == "admin":
+            admin_ids = [
+                str(admin_id).strip()
+                for admin_id in getattr(self.config, "admins_id", [])
+                if str(admin_id).strip()
+            ]
+            if not admin_ids:
+                logger.warning(
+                    f"[outputpro:{source}] hit runtime error keyword {keyword}, "
+                    "but no admins are configured for forwarding"
+                )
+                return
+            if session is None:
+                logger.warning(
+                    f"[outputpro:{source}] hit runtime error keyword {keyword}, "
+                    "but session context is missing so admin forwarding is skipped"
+                )
+                return
+
+            failed: list[str] = []
+            for admin_id in admin_ids:
+                try:
+                    admin_session = copy.copy(session)
+                    admin_session.session_id = admin_id
+                    admin_session.message_type = MessageType.FRIEND_MESSAGE
+                    await context.send_message(admin_session, chain)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failed.append(admin_id)
+                    logger.warning(
+                        f"[outputpro:{source}] forward runtime error to admin "
+                        f"{admin_id} failed: {exc}"
+                    )
+
+            if failed:
+                logger.warning(
+                    f"[outputpro:{source}] runtime error keyword {keyword} forwarding "
+                    f"failed for admins: {','.join(failed)}"
+                )
+            return
+
+        try:
+            await context.send_message(forward_umo, chain)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                f"[outputpro:{source}] forward runtime error to {forward_umo} "
+                f"failed: {exc}"
+            )
 
     def _match_block_word(self, plain: str) -> str | None:
         if not plain:
             return None
 
         for word in self.config.block.block_words:
+            if word and word in plain:
+                return word
+        return None
+
+    def _match_error_keyword(self, plain: str) -> str | None:
+        if not plain:
+            return None
+
+        for word in self.config.error.keywords:
             if word and word in plain:
                 return word
         return None

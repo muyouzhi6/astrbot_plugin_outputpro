@@ -23,19 +23,15 @@ from .config import CleanConfig, ReplaceConfig
 
 SQUARE_BRACKET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("square", re.compile(r"\[[^\[\]\r\n]{0,120}\]")),
-    ("square_cn", re.compile(r"【[^【】\r\n]{0,120}】")),
-    ("square_alt", re.compile(r"〔[^〔〕\r\n]{0,120}〕")),
+    ("square_cn", re.compile(r"\u3010[^\u3010\u3011\r\n]{0,120}\u3011")),
+    ("square_alt", re.compile(r"\u3014[^\u3014\u3015\r\n]{0,120}\u3015")),
 )
 
 PARENTHESIS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("paren", re.compile(r"\([^()\r\n]{0,120}\)")),
-    ("paren_cn", re.compile(r"（[^（）\r\n]{0,120}）")),
+    ("paren_cn", re.compile(r"\uFF08[^\uFF08\uFF09\r\n]{0,120}\uFF09")),
     ("brace", re.compile(r"\{[^{}\r\n]{0,120}\}")),
-    ("brace_cn", re.compile(r"｛[^｛｝\r\n]{0,120}｝")),
-    ("quote_cn", re.compile(r"「[^「」\r\n]{0,120}」")),
-    ("quote_cn_alt", re.compile(r"『[^『』\r\n]{0,120}』")),
-    ("angle_cn", re.compile(r"《[^《》\r\n]{0,120}》")),
-    ("angle_cn_alt", re.compile(r"〈[^〈〉\r\n]{0,120}〉")),
+    ("brace_cn", re.compile(r"\uFF5B[^\uFF5B\uFF5D\r\n]{0,120}\uFF5D")),
 )
 
 GENERIC_TAG_PATTERN = re.compile(
@@ -44,6 +40,10 @@ GENERIC_TAG_PATTERN = re.compile(
     r"(?![0-9A-Za-z])"
 )
 TTS_SPEED_TAG_PATTERN = re.compile(r"<#\s*\d+(?:\.\d{1,2})?\s*#>")
+ASCII_WRAPPED_TAG_RE = re.compile(
+    r"(?:EMO(?:\s*[:：-]\s*[A-Za-z_-]{1,24})?|[A-Za-z][A-Za-z0-9_-]{0,23})",
+    re.IGNORECASE,
+)
 
 MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 LINE_SPACE_RE = re.compile(r"[ \t]*\n[ \t]*")
@@ -90,6 +90,34 @@ def _should_apply_cosmetic_cleanup(text: str, cfg: CleanConfig) -> bool:
     return len(text) < cfg.text_threshold
 
 
+def _extract_wrapped_inner_text(wrapped: str) -> str:
+    if len(wrapped) < 2:
+        return wrapped.strip()
+    return wrapped[1:-1].strip()
+
+
+def _looks_like_wrapped_markup(inner: str) -> bool:
+    if not inner or len(inner) > 24:
+        return False
+
+    if any(ch in inner for ch in "\r\n\t"):
+        return False
+
+    if inner.isdigit():
+        return False
+
+    if re.search(r"[\u4e00-\u9fff]", inner):
+        return False
+
+    if re.search(r"[，。！？；：,.!?;:/\\\\]", inner):
+        return False
+
+    if " " in inner:
+        return False
+
+    return bool(ASCII_WRAPPED_TAG_RE.fullmatch(inner))
+
+
 def _remove_patterns(
     text: str,
     patterns: tuple[tuple[str, re.Pattern[str]], ...],
@@ -100,12 +128,23 @@ def _remove_patterns(
     for _ in range(8):
         changed = False
         for _, pattern in patterns:
-            matches = pattern.findall(current)
-            if not matches:
+            removed: list[str] = []
+
+            def _replace(match: re.Match[str]) -> str:
+                wrapped = match.group(0)
+                if not _looks_like_wrapped_markup(_extract_wrapped_inner_text(wrapped)):
+                    return wrapped
+                removed.append(wrapped)
+                return ""
+
+            updated = pattern.sub(_replace, current)
+            if not removed:
                 continue
-            report.add_removed(label, matches)
-            current = pattern.sub("", current)
+
+            report.add_removed(label, removed)
+            current = updated
             changed = True
+
         if not changed:
             break
     return current

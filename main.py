@@ -1,3 +1,6 @@
+import importlib
+import re
+
 from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.provider import LLMResponse
@@ -23,6 +26,7 @@ TTS_EMOTION_ROUTER_ROOT = "astrbot_plugin_tts_emotion_router"
 TTS_OUTPUT_MARKER_MODE_EXTRA = "_tts_emotion_router_output_marker_mode"
 TTS_OUTPUT_MARKER_MODE_PRESERVE = "preserve_for_tts"
 TTS_OUTPUT_MARKER_MODE_STRIP = "strip_visible"
+TTS_PAUSE_TAG_RE = re.compile(r"<#\s*\d+(?:\.\d{1,2})?\s*#>")
 
 
 class OutputPlugin(Star):
@@ -65,33 +69,28 @@ class OutputPlugin(Star):
 
         result_chain = getattr(response, "result_chain", None)
         chain = getattr(result_chain, "chain", None)
-        if preserve_emotion_tag:
-            completion_text = getattr(response, "completion_text", None)
-            visible_text = collect_visible_text(chain) if chain else ""
-            if not visible_text and isinstance(completion_text, str):
-                visible_text = completion_text
-
-            logger.debug(
-                "[outputpro:on_llm_response] preserve_emotion_tag=%s reason=%s raw=%r",
-                preserve_emotion_tag,
-                preserve_reason,
-                visible_text,
-            )
-            self._block_llm_response_if_needed(response, visible_text)
-            return
 
         if chain:
             before_count = len(chain)
-            if tts_instance is not None:
+            if preserve_emotion_tag:
                 transform_text_in_chain(
                     chain,
-                    lambda value: self._sanitize_with_tts_plugin(tts_instance, value),
+                    lambda value: self._sanitize_for_tts_preserve_mode(
+                        tts_instance,
+                        value,
+                    ),
                 )
-            sanitize_chain(
-                chain,
-                self.cfg.clean,
-                emotion_tag=True,
-            )
+            else:
+                if tts_instance is not None:
+                    transform_text_in_chain(
+                        chain,
+                        lambda value: self._sanitize_with_tts_plugin(tts_instance, value),
+                    )
+                sanitize_chain(
+                    chain,
+                    self.cfg.clean,
+                    emotion_tag=True,
+                )
             replace_in_chain(chain, self.cfg.replace)
 
             plain = collect_visible_text(chain)
@@ -108,16 +107,24 @@ class OutputPlugin(Star):
 
         completion_text = getattr(response, "completion_text", None)
         updated_text = completion_text if isinstance(completion_text, str) else ""
-        if updated_text and tts_instance is not None:
+        if updated_text and preserve_emotion_tag:
+            updated_text = self._sanitize_for_tts_preserve_mode(
+                tts_instance,
+                updated_text,
+            )
+        elif updated_text and tts_instance is not None:
             updated_text = self._sanitize_with_tts_plugin(
                 tts_instance,
                 updated_text,
             )
-        cleaned_text, _ = clean_text(
-            updated_text,
-            self.cfg.clean,
-            emotion_tag=True,
-        )
+        if preserve_emotion_tag:
+            cleaned_text = updated_text
+        else:
+            cleaned_text, _ = clean_text(
+                updated_text,
+                self.cfg.clean,
+                emotion_tag=True,
+            )
         cleaned_text, _ = replace_text(cleaned_text, self.cfg.replace)
         if isinstance(completion_text, str) and cleaned_text != completion_text:
             response.completion_text = cleaned_text
@@ -326,6 +333,68 @@ class OutputPlugin(Star):
                 exc_info=True,
             )
             return text
+
+    def _sanitize_for_tts_preserve_mode(self, tts_instance, text: str) -> str:
+        protected_text, placeholders = self._protect_tts_controls(tts_instance, text)
+        cleaned_text, _ = clean_text(
+            protected_text,
+            self.cfg.clean,
+            emotion_tag=True,
+        )
+        return self._restore_tts_controls(cleaned_text, placeholders)
+
+    def _protect_tts_controls(self, tts_instance, text: str) -> tuple[str, dict[str, str]]:
+        placeholders: dict[str, str] = {}
+        counter = 0
+
+        def _stash(raw: str) -> str:
+            nonlocal counter
+            token = f"__OUTPUTPRO_TTS_KEEP_{counter}__"
+            counter += 1
+            placeholders[token] = raw
+            return token
+
+        protected_text = TTS_PAUSE_TAG_RE.sub(lambda match: _stash(match.group(0)), text)
+        expressive_tags = self._get_tts_expressive_tags(tts_instance)
+        if expressive_tags:
+            voice_tag_re = re.compile(
+                rf"\((?:{'|'.join(re.escape(tag) for tag in expressive_tags)})\)",
+                re.IGNORECASE,
+            )
+            protected_text = voice_tag_re.sub(
+                lambda match: _stash(match.group(0)),
+                protected_text,
+            )
+
+        return protected_text, placeholders
+
+    @staticmethod
+    def _restore_tts_controls(text: str, placeholders: dict[str, str]) -> str:
+        restored = text
+        for token, raw in placeholders.items():
+            restored = restored.replace(token, raw)
+        return restored
+
+    @staticmethod
+    def _get_tts_expressive_tags(tts_instance) -> tuple[str, ...]:
+        if tts_instance is None:
+            return ()
+
+        try:
+            module = importlib.import_module(tts_instance.__class__.__module__)
+            tags = getattr(module, "MINIMAX_EXPRESSIVE_TAGS", None)
+            if isinstance(tags, (list, tuple, set)):
+                normalized = tuple(
+                    str(tag).strip().lower() for tag in tags if str(tag).strip()
+                )
+                return normalized
+        except Exception:
+            logger.debug(
+                "[outputpro:on_llm_response] failed to inspect TTS expressive tags",
+                exc_info=True,
+            )
+
+        return ()
 
     @staticmethod
     def _set_event_extra(event: AstrMessageEvent, key: str, value) -> None:
