@@ -30,7 +30,7 @@ class ChineseTypoGenerator:
         error_rate: float = 0.01,
         min_freq: int = 9,
         tone_error_rate: float = 0.1,
-        word_replace_rate: float = 0.006,
+        word_replace_rate: float = 0.01,
         max_freq_diff: int = 200,
     ):
         self.error_rate = error_rate
@@ -40,6 +40,8 @@ class ChineseTypoGenerator:
         self.max_freq_diff = max_freq_diff
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.word_min_length = 2
+        self.word_max_length = 4
 
         self.pinyin_dict = self._create_pinyin_dict()
         self.char_frequency = self._load_or_create_char_frequency()
@@ -181,8 +183,15 @@ class ChineseTypoGenerator:
     def _segment_sentence(sentence: str) -> list[str]:
         return list(jieba.cut(sentence))
 
+    def _should_try_word_replacement(self, word: str) -> bool:
+        if not (self.word_min_length <= len(word) <= self.word_max_length):
+            return False
+        if any(not self._is_chinese_char(char) for char in word):
+            return False
+        return word in self.word_frequency
+
     def _get_word_homophones(self, word: str) -> list[str]:
-        if len(word) == 1:
+        if not self._should_try_word_replacement(word):
             return []
 
         word_pinyin = self._get_word_pinyin(word)
@@ -194,7 +203,7 @@ class ChineseTypoGenerator:
             candidates.append(chars)
 
         original_word_freq = self.word_frequency.get(word, 0)
-        min_word_freq = original_word_freq * 0.1
+        min_word_freq = max(original_word_freq * 0.05, 50.0)
 
         homophones: list[tuple[str, float]] = []
         for combo in itertools.product(*candidates):
@@ -210,12 +219,13 @@ class ChineseTypoGenerator:
                 homophones.append((new_word, combined_score))
 
         sorted_homophones = sorted(homophones, key=lambda x: x[1], reverse=True)
-        return [candidate for candidate, _ in sorted_homophones[:5]]
+        return sorted_homophones[:5]
 
-    def create_typo_sentence(self, sentence: str) -> tuple[str, str | None]:
+    def create_typo_sentence(self, sentence: str) -> tuple[str, str | None, list[tuple[str, str]]]:
         result: list[str] = []
         word_typos: list[tuple[str, str]] = []
         char_typos: list[tuple[str, str]] = []
+        replacements: list[tuple[str, str]] = []
 
         words = self._segment_sentence(sentence)
         for word in words:
@@ -225,12 +235,15 @@ class ChineseTypoGenerator:
 
             word_pinyin = self._get_word_pinyin(word)
 
-            if len(word) > 1 and random.random() < self.word_replace_rate:
+            if self._should_try_word_replacement(word) and random.random() < self.word_replace_rate:
                 word_homophones = self._get_word_homophones(word)
                 if word_homophones:
-                    typo_word = random.choice(word_homophones)
+                    candidates = [candidate for candidate, _score in word_homophones]
+                    weights = [score for _candidate, score in word_homophones]
+                    typo_word = random.choices(candidates, weights=weights, k=1)[0]
                     result.append(typo_word)
                     word_typos.append((typo_word, word))
+                    replacements.append((word, typo_word))
                     continue
 
             if len(word) == 1:
@@ -246,26 +259,12 @@ class ChineseTypoGenerator:
                         if random.random() < replace_prob:
                             result.append(typo_char)
                             char_typos.append((typo_char, char))
+                            replacements.append((char, typo_char))
                             continue
                 result.append(char)
                 continue
 
-            word_result: list[str] = []
-            for char, py in zip(word, word_pinyin, strict=False):
-                word_error_rate = self.error_rate * (0.7 ** (len(word) - 1))
-                if random.random() < word_error_rate:
-                    similar_chars = self._get_similar_frequency_chars(char, py)
-                    if similar_chars:
-                        typo_char = random.choice(similar_chars)
-                        typo_freq = self.char_frequency.get(typo_char, 0)
-                        orig_freq = self.char_frequency.get(char, 0)
-                        replace_prob = self._calculate_replacement_probability(orig_freq, typo_freq)
-                        if random.random() < replace_prob:
-                            word_result.append(typo_char)
-                            char_typos.append((typo_char, char))
-                            continue
-                word_result.append(char)
-            result.append("".join(word_result))
+            result.append(word)
 
         correction_suggestion = None
         if word_typos:
@@ -275,7 +274,7 @@ class ChineseTypoGenerator:
             _wrong_char, correct_char = random.choice(char_typos)
             correction_suggestion = correct_char
 
-        return "".join(result), correction_suggestion
+        return "".join(result), correction_suggestion, replacements
 
     def set_params(self, **kwargs):
         for key, value in kwargs.items():
@@ -392,7 +391,7 @@ class TypoStep(BaseStep):
         return False
 
     async def handle(self, ctx: OutContext) -> StepResult:
-        changed_count = 0
+        replacement_summaries: list[str] = []
         append_separator = self._resolve_append_separator(ctx)
         generator = self._get_typo_generator()
 
@@ -402,7 +401,7 @@ class TypoStep(BaseStep):
             if not seg.text or not seg.text.strip():
                 continue
 
-            typoed_text, typo_corrections = generator.create_typo_sentence(seg.text)
+            typoed_text, typo_corrections, replacements = generator.create_typo_sentence(seg.text)
             processed_parts = [typoed_text]
             if typo_corrections and random.random() < self.cfg.correction_append_prob:
                 if self._should_append_correction(
@@ -417,8 +416,18 @@ class TypoStep(BaseStep):
             new_text = separator.join(part for part in processed_parts if part)
             if new_text and new_text != seg.text:
                 seg.text = new_text
-                changed_count += 1
+                replacement_summaries.extend(
+                    f"{original}->{typo}" for original, typo in replacements
+                )
 
-        if changed_count:
-            return StepResult(msg=f"错字模拟完成，修改了 {changed_count} 段文本")
+        if replacement_summaries:
+            summary_suffix = ""
+            if replacement_summaries:
+                preview = ", ".join(replacement_summaries[:5])
+                if len(replacement_summaries) > 5:
+                    preview += ", ..."
+                summary_suffix = f"（{preview}）"
+            return StepResult(
+                msg=f"错字模拟完成，共 {len(replacement_summaries)} 处替换{summary_suffix}"
+            )
         return StepResult()

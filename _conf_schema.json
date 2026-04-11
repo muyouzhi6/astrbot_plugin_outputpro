@@ -327,7 +327,7 @@
                 "description": "整词替换概率",
                 "hint": "控制多字词语整体替换为高频同音词的概率",
                 "type": "float",
-                "default": 0.006
+                "default": 0.01
             },
             "correction_append_prob": {
                 "description": "追加纠正概率",
