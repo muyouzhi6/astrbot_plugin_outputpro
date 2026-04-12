@@ -587,7 +587,7 @@
                 },
                 "default": 2
             },
-            "typing_cps": {
+            "per_char_delay": {
                 "description": "打字速度",
                 "type": "float",
                 "hint": "每段话之间需要停顿一定时间，用来模拟打字，此处设定每个汉字耗时多少秒（英文字母视为半个汉字）",

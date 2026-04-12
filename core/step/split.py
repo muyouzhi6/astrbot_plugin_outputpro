@@ -233,6 +233,7 @@ class SegmentBuilder:
             self.append_tail(self.current.components)
         else:
             self.segments.append(self.current)
+
             if self.max_count > 0 and len(self.segments) >= self.max_count:
                 self.exhausted = True
 
@@ -386,26 +387,10 @@ class SplitStep(BaseStep):
     def _calc_delay(self, text: str) -> float:
         if not text:
             return 0.0
-        cn = self.cfg.typing_cps
+        cn = self.cfg.per_char_delay
         en = cn / 2
         delay = sum(cn if "\u4e00" <= c <= "\u9fff" else en for c in text)
         return max(1.0, min(20.0, delay))
-
-    def _supports_typing(self, ctx: OutContext) -> bool:
-        """判断是否支持 typing"""
-        platform = ctx.event.get_platform_name()
-
-        # Telegram 原生支持
-        if platform == "telegram":
-            return True
-
-        # QQ 私聊支持
-        if platform == "aiocqhttp" and not ctx.event.get_group_id():
-            bot = getattr(ctx.event, "bot", None)
-            api = getattr(bot, "api", None)
-            return bool(api and hasattr(api, "call_action"))
-
-        return False
 
     # =========================
     # 核心 split
@@ -500,6 +485,7 @@ class SplitStep(BaseStep):
             seg = Segment()
             builder.attach_pending(seg)
             seg.append(comp)
-            builder.segments.append(seg)
+            builder.current = seg
+            builder.flush()
 
         return builder.finalize()

@@ -195,7 +195,7 @@ class SplitConfig(ConfigNode):
     max_length: int
     char_list: list[str]
     max_count: int
-    typing_cps: float
+    per_char_delay: float
     show_typing: bool
 
     def __init__(self, data: MutableMapping[str, Any]):
@@ -209,7 +209,8 @@ class SplitConfig(ConfigNode):
 
     def _build_split_pattern(self) -> str:
         tokens = []
-        for ch in self.char_list:
+        char_list = self.char_list or r"(?!x)x"
+        for ch in char_list:
             if ch == "\\n":
                 tokens.append("\n")
             elif ch == "\\s":
