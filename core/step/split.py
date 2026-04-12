@@ -263,7 +263,7 @@ class TypingController:
                 await ctx.event.send_typing()
                 return
 
-            if platform == "aiocqhttp":
+            if platform == "aiocqhttp" and not ctx.gid:
                 bot = getattr(ctx.event, "bot", None)
                 api = getattr(bot, "api", None)
                 if api:
