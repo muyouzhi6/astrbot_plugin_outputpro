@@ -96,6 +96,7 @@ class TextTokenizer:
             "‘": "’",
             "【": "】",
             "<": ">",
+            "「": "」",
         }
 
     # Kaomoji 内部处理
@@ -382,54 +383,65 @@ class SplitStep(BaseStep):
     # =========================
     def _select_split_points(self, tokens: list[Token]) -> set[int]:
         """
-        选择切点：
-        1. 强标点优先（。！？）
-        2. 不够 → 均分补齐
+        选切点（最多 max_count 段 → k = max_count-1 个切点）
+
+        规则：
+        1. 优先使用语义切点（is_split）
+        2. 按累计长度均分选择切点
+        3. 过滤：避免产生 < 2 字的短段
         """
-        # 所有切点
-        split_indices = [i for i, t in enumerate(tokens) if t.is_split]
-        if not split_indices:
+
+        split_idx = [i for i, t in enumerate(tokens) if t.is_split]
+        if not split_idx:
             return set()
 
         max_count = self.cfg.max_count
-
-        # 不限制 or 不超限
-        if max_count <= 0 or len(split_indices) <= max_count - 1:
-            return set(split_indices)
+        if max_count <= 0 or len(split_idx) <= max_count - 1:
+            return set(split_idx)
 
         k = max_count - 1
         if k <= 0:
             return set()
 
-        # 区分强弱切点
-        strong_indices = []
-        weak_indices = []
-        for i in split_indices:
-            text = tokens[i].text
-            if any(p in text for p in ("。", "！", "？", "!", "?")):
-                strong_indices.append(i)
-            else:
-                weak_indices.append(i)
-        selected = []
+        # ---------- 1. 长度均分选点 ----------
+        lengths = [len(t.text) for t in tokens]
+        total = sum(lengths)
+        targets = [total * i / max_count for i in range(1, max_count)]
 
-        # 先选强切点，不够就用弱切点补齐
-        if len(strong_indices) >= k:
-            n = len(strong_indices)
-            selected = [
-                strong_indices[min(round(i * n / k), n - 1)] for i in range(1, k + 1)
-            ]
-        else:
-            selected = strong_indices.copy()
-            remain = k - len(selected)
-            if weak_indices:
-                n = len(weak_indices)
-                supplement = [
-                    weak_indices[min(round(i * n / remain), n - 1)]
-                    for i in range(1, remain + 1)
-                ]
-                selected.extend(supplement)
+        raw = set()
+        acc, ti = 0, 0
 
-        return set(selected)
+        for i, l in enumerate(lengths):
+            acc += l
+            if tokens[i].is_split:
+                while ti < k and acc >= targets[ti]:
+                    raw.add(i)
+                    ti += 1
+
+        if not raw:
+            return set()
+
+        # ---------- 2. 最小段长度过滤 ----------
+        min_len = 2
+        final = set()
+        last = -1
+
+        def seg_len(l: int, r: int) -> int:
+            return sum(len(t.text) for t in tokens[l:r])
+
+        for idx in sorted(raw):
+            if seg_len(last + 1, idx + 1) < min_len:
+                continue
+            final.add(idx)
+            last = idx
+
+        # ---------- 3. 修正尾段 ----------
+        if final:
+            tail_len = seg_len(last + 1, len(tokens))
+            if tail_len < min_len:
+                final.remove(max(final))
+
+        return final
 
     def _split_chain(self, chain: list[BaseMessageComponent]) -> list[Segment]:
         """
