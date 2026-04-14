@@ -387,14 +387,12 @@ class SplitStep(BaseStep):
     # =========================
     # 核心 split
     # =========================
-    def _select_split_points(self, tokens: list[Token], min_len: int = 2) -> set[int]:
+    def _select_split_points(self, tokens: list[Token]) -> set[int]:
         """
         选切点（最多 max_count 段 → k = max_count-1 个切点）
-
         规则：
         1. 优先使用语义切点（is_split）
         2. 按累计长度均分选择切点
-        3. 过滤：避免产生过短段
         """
 
         split_idx = [i for i, t in enumerate(tokens) if t.is_split and t.text.strip()]
@@ -424,29 +422,7 @@ class SplitStep(BaseStep):
                     raw.add(i)
                     ti += 1
 
-        if not raw:
-            return set()
-
-        # 最小段长度过滤
-        final = set()
-        last = -1
-
-        def seg_len(le: int, r: int) -> int:
-            return sum(len(t.text) for t in tokens[le:r])
-
-        for idx in sorted(raw):
-            if seg_len(last + 1, idx + 1) < min_len:
-                continue
-            final.add(idx)
-            last = idx
-
-        # 修正尾段 ----------
-        if final:
-            tail_len = seg_len(last + 1, len(tokens))
-            if tail_len < min_len:
-                final.remove(max(final))
-
-        return final
+        return raw
 
     def _split_chain(self, chain: list[BaseMessageComponent]) -> list[Segment]:
         """
